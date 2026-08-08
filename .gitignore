@@ -1,0 +1,21 @@
+# Dados brutos e processados nao vao para o repositorio.
+# Sao ~55 MB de JSON que qualquer pessoa baixa da API do IBGE
+# seguindo as URLs do README. Versionar dado que da para reproduzir
+# so incha o repositorio.
+dados/bruto/*.json
+dados/processado/*.csv
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Power BI
+*.pbix.bak
+~$*.pbix
+
+# Sistema
+Thumbs.db
+.DS_Store
+desktop.ini
