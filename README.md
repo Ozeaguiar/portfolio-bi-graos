@@ -3,10 +3,7 @@
 Projeto de BI usando dados públicos do IBGE. Fiz o pipeline em Python, o modelo
 em SQL Server e o dashboard em Power BI.
 
-![Dashboard Produção](docs/Dashboard1.png)
-![Dashboard Produtividade](docs/Dashboard2.png)
-![Dashboard DataDrive](docs/dashboard3.png)
-
+![Painel de produção](docs/Dashboard1.png)
 
 ## Objetivo
 
@@ -84,7 +81,7 @@ Na base final, 0,2% dos registros de quantidade estão nulos. A maior parte é
 milho, provavelmente milho de segunda safra em municípios pequenos, onde o IBGE
 omite por sigilo.
 
-Também checquei se algum município colheu mais área do que plantou, o que seria
+Também chequei se algum município colheu mais área do que plantou, o que seria
 impossível. Não encontrei nenhum caso nas 34.396 linhas.
 
 ## Resultados
@@ -123,6 +120,28 @@ está certo:
   Niña, que derrubou a safra gaúcha de soja.
 - Os mesmos números saem do Python, do SQL e do Power BI. Perda de área em
   Pernambuco: 54,3% no Python e 54,31% no SQL.
+
+## Telas
+
+### Produção
+
+Volume, área, rendimento e valor, com evolução anual e ranking por estado.
+
+![Painel de produção](docs/Dashboard1.png)
+
+### Produtividade
+
+Relação entre área colhida e rendimento por município, variação ano a ano e
+ranking dos maiores produtores.
+
+![Painel de produtividade](docs/Dashboard2.png)
+
+### Qualidade dos dados
+
+Cobertura da base, registros sem informação por ano e produto, e a nota
+metodológica sobre o tratamento.
+
+![Painel de qualidade dos dados](docs/Dashboard3.png)
 
 ## Como rodar
 
@@ -184,6 +203,7 @@ sql/01_modelo_dimensional.sql   criação das tabelas
 sql/02_analises.sql             consultas analíticas
 powerbi/producao_graos.pbix     dashboard
 powerbi/medidas-e-rls.md        medidas DAX e RLS
+docs/                           prints das telas
 dados/bruto                     JSON do SIDRA
 dados/processado                CSV gerados pelo pipeline
 ```
