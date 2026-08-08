@@ -3,7 +3,10 @@
 Projeto de BI usando dados públicos do IBGE. Fiz o pipeline em Python, o modelo
 em SQL Server e o dashboard em Power BI.
 
-![Dashboard](docs/dashboard.png)
+![Dashboard Produção](docs/Dashboard1.png)
+![Dashboard Produtividade](docs/Dashboard2.png)
+![Dashboard DataDrive](docs/dashboard3.png)
+
 
 ## Objetivo
 
