@@ -1,14 +1,13 @@
 """
-Ingestão e tratamento da Produção Agrícola Municipal (PAM/IBGE, tabela 1612).
+Script de ingestao dos dados do IBGE (PAM, tabela 1612).
 
-Lê os JSON baixados da API do SIDRA, aplica limpeza e gera as tabelas fato e
-dimensão do modelo dimensional.
+Le os JSON que eu baixei do SIDRA e monta os CSV da fato e das dimensoes.
 
-Uso:
-    python scripts/ingestao.py                    # lê tudo em dados/bruto/*.json
-    python scripts/ingestao.py --amostra          # dados sintéticos, para testar o pipeline
+Rodar:
+    python scripts/ingestao.py                    # usa os json de dados/bruto
+    python scripts/ingestao.py --amostra          # dados fake, so pra testar
 
-Como obter os dados: ver README, seção "Como rodar".
+Onde baixar os arquivos esta explicado no README.
 Fonte: https://sidra.ibge.gov.br/tabela/1612
 """
 
@@ -23,8 +22,8 @@ RAIZ = Path(__file__).resolve().parent.parent
 BRUTO = RAIZ / "dados" / "bruto"
 SAIDA = RAIZ / "dados" / "processado"
 
-# Nome da variável no SIDRA -> nome da coluna no modelo.
-# O mapeamento é por NOME e não por código: se o IBGE mudar o código, não quebra.
+# de/para do nome da variavel no SIDRA pro nome da coluna que eu uso aqui.
+# fiz pelo nome porque o codigo da variavel ja mudou uma vez e quebrou tudo.
 VARIAVEIS = {
     "Área plantada": "area_plantada_ha",
     "Área colhida": "area_colhida_ha",
@@ -32,12 +31,11 @@ VARIAVEIS = {
     "Valor da produção": "valor_producao_mil_reais",
 }
 
-# Marcadores textuais do IBGE. Não são números.
-#   "-"  = zero          "..." = não se aplica
-#   ".." = não disponível  "X"  = omitido para não identificar o informante
+# as vezes o IBGE manda texto no lugar do numero:
+#   "-" = zero, ".." = nao disponivel, "..." = nao se aplica, "X" = sigilo
 MARCADORES = {"-", "..", "...", "X", "", " ", "nan"}
 
-# Código IBGE da UF (2 primeiros dígitos do código do município) -> sigla.
+# os 2 primeiros digitos do codigo do municipio sao a UF
 UF_POR_CODIGO = {
     11: "RO", 12: "AC", 13: "AM", 14: "RR", 15: "PA", 16: "AP", 17: "TO",
     21: "MA", 22: "PI", 23: "CE", 24: "RN", 25: "PB", 26: "PE", 27: "AL",
@@ -46,16 +44,14 @@ UF_POR_CODIGO = {
 }
 
 
-# --------------------------------------------------------------------------
-# 1. Leitura
-# --------------------------------------------------------------------------
+# ----- leitura dos arquivos -----
 def ler_sidra(pasta: Path) -> pd.DataFrame:
     """
-    Lê os JSON da API do SIDRA (formato apisidra.ibge.gov.br).
+    Le os json da API do SIDRA.
 
-    O primeiro elemento de cada arquivo é um dicionário de rótulos, não um dado.
-    As chaves D1..Dn variam conforme a consulta, então descobrimos os papéis
-    pelos rótulos em vez de assumir posição fixa.
+    A primeira posicao do arquivo nao e dado, e um dicionario com os nomes das
+    colunas. E as chaves D1, D2... mudam conforme a consulta, entao procuro
+    pelo rotulo em vez de fixar a posicao.
     """
     arquivos = sorted(pasta.glob("*.json"))
     if not arquivos:
@@ -75,7 +71,7 @@ def ler_sidra(pasta: Path) -> pd.DataFrame:
 
         df = pd.DataFrame(registros)
 
-        # Descobre qual chave D* corresponde a cada dimensão, pelo rótulo.
+        # acha a chave D* certa olhando o rotulo
         def chave(trecho: str, sufixo: str) -> str | None:
             for k, v in rotulos.items():
                 if k.startswith("D") and k.endswith(sufixo) and trecho.lower() in v.lower():
@@ -104,9 +100,9 @@ def ler_sidra(pasta: Path) -> pd.DataFrame:
 
 
 def gerar_amostra(n_locais: int = 60, anos=range(2018, 2024)) -> pd.DataFrame:
-    """Base sintética no formato longo já normalizado, para testar o pipeline."""
+    """Gera uma base fake pra eu testar o pipeline sem depender dos json."""
     rng = np.random.default_rng(42)
-    # prefixos reais do IBGE, para o código sintético gerar UFs diferentes
+    # uso prefixo de UF real pro codigo fake ficar parecido com o do IBGE
     prefixos = {51: "MT", 41: "PR", 43: "RS", 52: "GO", 50: "MS", 29: "BA"}
     codigos_uf = list(prefixos)
     graos = ["Soja (em grão)", "Milho (em grão)", "Trigo (em grão)"]
@@ -131,7 +127,7 @@ def gerar_amostra(n_locais: int = 60, anos=range(2018, 2024)) -> pd.DataFrame:
                     linhas.append({"cod_local": str(cod), "local": nome, "variavel": var,
                                    "ano": str(ano), "produto": produto, "V": str(round(val))})
     df = pd.DataFrame(linhas)
-    # sujeira proposital
+    # sujo uns registros de proposito pra ver se a limpeza pega
     idx = df.sample(frac=0.03, random_state=1).index
     df.loc[idx, "V"] = rng.choice(["-", "...", ".."], size=len(idx))
     df = pd.concat([df, df.sample(frac=0.01, random_state=3)], ignore_index=True)
@@ -139,17 +135,17 @@ def gerar_amostra(n_locais: int = 60, anos=range(2018, 2024)) -> pd.DataFrame:
     return df
 
 
-# --------------------------------------------------------------------------
-# 2. Limpeza e pivot
-# --------------------------------------------------------------------------
+# ----- limpeza e pivot -----
 def limpar(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Decisões (documentadas no README):
-      - Marcadores do IBGE viram NaN, nunca zero. Zero é "plantou e não colheu";
-        NaN é "não sei". Tratar os dois igual distorce o rendimento.
-      - Duplicatas por local+produto+ano+variável são removidas.
-      - Só as 4 variáveis do modelo são mantidas; rendimento é medida, não coluna.
-      - O nome do município vem como "Sorriso (MT)": a UF é extraída daí.
+    Limpeza geral antes de montar o modelo.
+
+    O que eu faco aqui:
+      - marcador de texto do IBGE vira NaN. Nao converti pra zero porque zero
+        quer dizer que plantou e nao colheu, e ai o rendimento sairia errado
+        nos municipios que so nao tem informacao.
+      - tiro duplicata de local + produto + ano + variavel.
+      - guardo so as 4 variaveis do modelo. Rendimento eu calculo no Power BI.
     """
     antes = len(df)
 
@@ -163,14 +159,13 @@ def limpar(df: pd.DataFrame) -> pd.DataFrame:
 
     df["cod_local"] = pd.to_numeric(df["cod_local"], errors="coerce").astype("Int64")
     df["ano"] = pd.to_numeric(df["ano"], errors="coerce").astype("Int64")
-    # dtype "object" (str puro) nas chaves de junção: o dtype "string" do pandas
-    # conflita no merge quando o outro lado nasce de uma lista vazia.
+    # tive que forcar object aqui. Com o dtype "string" do pandas o merge la
+    # embaixo dava erro quando um dos lados vinha de uma lista vazia.
     df["local"] = df["local"].astype(object).where(df["local"].notna()).str.strip()
     df["produto"] = df["produto"].astype(object).where(df["produto"].notna()).str.strip()
 
-    # UF vem do código do município, não do nome. Os 2 primeiros dígitos do
-    # código IBGE identificam a UF ("1100015" -> 11 -> RO). É estável; o nome
-    # muda de formato entre consultas ("Sorriso - MT" ou "Sorriso (MT)").
+    # pego a UF pelo codigo do municipio ("1100015" -> 11 -> RO). Tentei pelo
+    # nome antes, mas o formato muda ("Sorriso - MT", "Sorriso (MT)") e quebrava.
     df["uf"] = (df["cod_local"] // 100_000).map(UF_POR_CODIGO).astype(object)
     df["municipio"] = df["local"].str.replace(r"\s*[-(]\s*[A-Z]{2}\)?$", "", regex=True)
 
@@ -189,7 +184,7 @@ def limpar(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def pivotar(df: pd.DataFrame) -> pd.DataFrame:
-    """Formato longo (uma linha por variável) -> largo (uma linha por evento)."""
+    """Passa de formato longo (uma linha por variavel) pra largo."""
     largo = (
         df.pivot_table(
             index=["cod_local", "municipio", "uf", "ano", "produto"],
@@ -215,6 +210,7 @@ def pivotar(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def relatorio_qualidade(df: pd.DataFrame) -> pd.DataFrame:
+    """Conta os nulos por coluna, so pra eu ter ideia de como esta a base."""
     rel = (df.isna().mean().mul(100).round(2)
            .rename("pct_nulos").reset_index().rename(columns={"index": "coluna"}))
     print("\n[qualidade] nulos por coluna (%)")
@@ -223,9 +219,7 @@ def relatorio_qualidade(df: pd.DataFrame) -> pd.DataFrame:
     return rel
 
 
-# --------------------------------------------------------------------------
-# 3. Modelagem dimensional
-# --------------------------------------------------------------------------
+# ----- dimensoes e fato -----
 REGIOES = {
     "N": ["AC", "AP", "AM", "PA", "RO", "RR", "TO"],
     "NE": ["AL", "BA", "CE", "MA", "PB", "PE", "PI", "RN", "SE"],
@@ -237,6 +231,7 @@ UF_REGIAO = {uf: reg for reg, ufs in REGIOES.items() for uf in ufs}
 
 
 def construir_dimensoes(df: pd.DataFrame):
+    """Monta as tres dimensoes. A sk e so o indice + 1 mesmo."""
     dim_mun = (df[["cod_local", "municipio", "uf"]].drop_duplicates()
                .sort_values("cod_local").reset_index(drop=True)
                .rename(columns={"cod_local": "cod_municipio"}))
@@ -259,7 +254,7 @@ def construir_dimensoes(df: pd.DataFrame):
 
 
 def construir_fato(df, dim_mun, dim_prod, dim_tempo) -> pd.DataFrame:
-    """Granularidade: uma linha por município, produto e ano-safra."""
+    """Uma linha por municipio, produto e ano."""
     fato = (df.rename(columns={"cod_local": "cod_municipio"})
             .merge(dim_mun[["sk_municipio", "cod_municipio"]], on="cod_municipio", how="left")
             .merge(dim_prod[["sk_produto", "produto"]], on="produto", how="left")
@@ -272,6 +267,7 @@ def construir_fato(df, dim_mun, dim_prod, dim_tempo) -> pd.DataFrame:
                "valor_producao_mil_reais", "perda_area_ha", "flag_area_inconsistente"]
     fato = fato[colunas]
 
+    # confere se sobrou linha sem sk. Se sobrar e porque algum merge nao pegou.
     orfas = int(fato[["sk_municipio", "sk_produto", "sk_tempo"]].isna().any(axis=1).sum())
     if orfas:
         raise ValueError(f"{orfas} linhas da fato sem correspondência nas dimensões")
@@ -280,7 +276,6 @@ def construir_fato(df, dim_mun, dim_prod, dim_tempo) -> pd.DataFrame:
     return fato
 
 
-# --------------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--amostra", action="store_true", help="usar dados sintéticos")
