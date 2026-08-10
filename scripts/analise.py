@@ -1,10 +1,9 @@
 """
-Análise exploratória sobre o modelo dimensional.
+Analise em cima dos CSV que o ingestao.py gera.
 
-Gera os achados numéricos que vão para a seção "Resultados" do README —
-a parte que separa análise de exercício técnico.
+Uso isso pra tirar os numeros que eu coloquei na parte de Resultados do README.
 
-Uso:
+Rodar:
     python scripts/analise.py
     python scripts/analise.py --markdown > docs/resultados.md
 """
@@ -19,6 +18,7 @@ PROC = RAIZ / "dados" / "processado"
 
 
 def carregar() -> pd.DataFrame:
+    """Junta a fato com as tres dimensoes e devolve tudo em um df so."""
     fato = pd.read_csv(PROC / "fato_producao.csv")
     mun = pd.read_csv(PROC / "dim_municipio.csv")
     prod = pd.read_csv(PROC / "dim_produto.csv")
@@ -29,14 +29,16 @@ def carregar() -> pd.DataFrame:
 
 
 def fmt(n, casas=0):
+    """Formata numero no padrao BR (1.234,5). O replace com _ e so pra nao
+    trocar o ponto e a virgula duas vezes."""
     if pd.isna(n):
         return "n/d"
     return f"{n:,.{casas}f}".replace(",", "_").replace(".", ",").replace("_", ".")
 
 
-# --------------------------------------------------------------------------
+# ----- os calculos -----
 def concentracao(df: pd.DataFrame) -> str:
-    """Quanto do total nacional está em poucos municípios."""
+    """Vê quanto da producao esta concentrada em poucos municipios."""
     ultimo = int(df["ano"].max())
     base = df[df["ano"] == ultimo].groupby("municipio", as_index=False)["quantidade_t"].sum()
     base = base.sort_values("quantidade_t", ascending=False)
@@ -53,12 +55,14 @@ def concentracao(df: pd.DataFrame) -> str:
 
 def rendimento_por_uf(df: pd.DataFrame, participacao_minima: float = 0.01) -> str:
     """
-    Rendimento é razão de somas, nunca média de médias.
+    Variacao do rendimento (t/ha) por UF entre o primeiro e o ultimo ano.
 
-    Filtro de relevância: só entram UFs com pelo menos 1% da produção nacional.
-    Sem esse corte, o ranking é dominado por estados que quase não plantam grão,
-    onde uma variação absoluta pequena vira percentual enorme. Extremo de
-    percentual sobre base pequena é ruído, não sinal.
+    Somo quantidade e area primeiro e divido depois. Se fizer media das medias
+    o numero sai diferente.
+
+    O filtro de 1% eu coloquei depois: na primeira vez que rodei sem ele o
+    ranking encheu de estado que quase nao planta grao (o Ceara aparecia com
+    23 ha de trigo plantados), e a variacao percentual estourava.
     """
     primeiro, ultimo = int(df["ano"].min()), int(df["ano"].max())
 
@@ -72,7 +76,7 @@ def rendimento_por_uf(df: pd.DataFrame, participacao_minima: float = 0.01) -> st
          .groupby(["uf", "ano"], as_index=False)[["quantidade_t", "area_colhida_ha"]].sum())
     g["rend"] = g["quantidade_t"] / g["area_colhida_ha"]
     piv = g.pivot(index="uf", columns="ano", values="rend").dropna()
-    piv = piv[piv[primeiro] > 0]
+    piv = piv[piv[primeiro] > 0]  # evita divisao por zero na conta de baixo
     piv["var_pct"] = (piv[ultimo] / piv[primeiro] - 1) * 100
     piv = piv.sort_values("var_pct", ascending=False)
     melhor, pior = piv.index[0], piv.index[-1]
@@ -89,11 +93,11 @@ def rendimento_por_uf(df: pd.DataFrame, participacao_minima: float = 0.01) -> st
 
 def perda_de_area(df: pd.DataFrame, area_minima: float = 100_000) -> str:
     """
-    Perda entre plantio e colheita, por UF e produto.
+    Perda entre area plantada e area colhida, quebrada por UF e produto.
 
-    No agregado nacional a perda é diluída e não diz nada. O sinal aparece ao
-    abrir por UF e produto — e novamente com corte de relevância (área mínima),
-    pela mesma razão do rendimento.
+    No total do Brasil o numero fica bem baixo e nao mostra muita coisa. Fui
+    abrindo por estado e produto e ai apareceu. A area minima aqui e pelo mesmo
+    motivo do filtro de 1% do rendimento.
     """
     g = (df.groupby(["uf", "produto", "ano"], as_index=False)[["area_plantada_ha", "area_colhida_ha"]].sum())
     g = g[g["area_plantada_ha"] >= area_minima]
@@ -115,7 +119,7 @@ def perda_de_area(df: pd.DataFrame, area_minima: float = 100_000) -> str:
 
 
 def valor_por_tonelada(df: pd.DataFrame) -> str:
-    """Preço implícito: valor da produção dividido pelo volume."""
+    """Preco medio implicito: valor da producao dividido pela quantidade."""
     g = (df.groupby("ano", as_index=False)[["valor_producao_mil_reais", "quantidade_t"]].sum())
     g["r_por_t"] = g["valor_producao_mil_reais"] * 1000 / g["quantidade_t"]
     primeiro, ultimo = g.iloc[0], g.iloc[-1]
@@ -128,6 +132,7 @@ def valor_por_tonelada(df: pd.DataFrame) -> str:
 
 
 def cobertura(df: pd.DataFrame) -> str:
+    """Numeros gerais da base: linhas, municipios, produtos, anos e nulos."""
     nulos = df["quantidade_t"].isna().mean() * 100
     return (
         f"Base final: **{fmt(len(df))} linhas** na fato, cobrindo "
@@ -137,7 +142,6 @@ def cobertura(df: pd.DataFrame) -> str:
     )
 
 
-# --------------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--markdown", action="store_true", help="saída pronta para colar no README")
@@ -148,7 +152,7 @@ def main():
     for fn in (cobertura, concentracao, rendimento_por_uf, perda_de_area, valor_por_tonelada):
         try:
             achados.append(fn(df))
-        except Exception as e:  # base pequena demais para o recorte
+        except Exception as e:  # se a base estiver pequena algum recorte nao fecha
             print(f"[aviso] {fn.__name__} não pôde ser calculado: {e}")
 
     if args.markdown:
